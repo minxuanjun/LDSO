@@ -1,0 +1,22 @@
+# IDE files
+**/.idea
+**/CMakeLists.txt.user
+**/.vscode
+# build folders
+cmake-build-debug/*
+cmake-build-**
+**/build
+bin/*
+lib/*
+**/lib
+build*
+
+# results
+results/*
+evaluation/results/
+evaluation/matlab-evaluation/**/*.mat
+/results.txt*
+/pointcloud.ply
+
+# python
+**.pyc
