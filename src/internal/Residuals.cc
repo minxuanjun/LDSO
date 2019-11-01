@@ -10,8 +10,7 @@ namespace ldso {
 
     namespace internal {
 
-        double PointFrameResidual::linearize(shared_ptr<CalibHessian> &HCalib) 
-        {
+        double PointFrameResidual::linearize(shared_ptr<CalibHessian> &HCalib) {
 
             // compute jacobians
             state_NewEnergyWithOutlier = -1;
@@ -46,7 +45,7 @@ namespace ldso {
 
             // xy 到 idepth 的导数
             float d_d_x, d_d_y;
-
+            // 计算// J_geo, J_photo, 对应论文的公式13
             {
                 float drescale, u, v, new_idepth;  // data in target
                 // NOTE u = X/Z, v=Y/Z in target
@@ -122,14 +121,12 @@ namespace ldso {
             float JabJab_00 = 0, JabJab_01 = 0, JabJab_11 = 0;
 
             float wJI2_sum = 0;
-
-            for (int idx = 0; idx < patternNum; idx++) 
-            {
+            // 计算计算一个pattern中的J_I,
+            for (int idx = 0; idx < patternNum; idx++) {
                 float Ku, Kv;
                 shared_ptr<PointHessian> p = point.lock();
                 if (!projectPoint(p->u + patternP[idx][0], p->v + patternP[idx][1], p->idepth_scaled,
-                                  PRE_KRKiTll, PRE_KtTll, Ku, Kv)) 
-                {
+                                  PRE_KRKiTll, PRE_KtTll, Ku, Kv)) {
                     state_NewState = ResState::OOB;
                     return state_energy;
                 }
@@ -141,8 +138,7 @@ namespace ldso {
                 float residual = hitColor[0] - (float) (affLL[0] * color[idx] + affLL[1]);
 
                 float drdA = (color[idx] - b0);
-                if (!std::isfinite((float) hitColor[0])) 
-                {
+                if (!std::isfinite((float) hitColor[0])) {
                     state_NewState = ResState::OOB;
                     return state_energy;
                 }
@@ -156,12 +152,12 @@ namespace ldso {
                 energyLeft += w * w * hw * residual * residual * (2 - hw);
 
                 {
-                    if (hw < 1) hw = sqrtf(hw);
+                    if (hw < 1) hw = sqrtf(hw); // TODO： 为什么要开根号
                     hw = hw * w;
 
                     hitColor[1] *= hw;
                     hitColor[2] *= hw;
-
+                    // 存储pattern中每个元素的的光度残差、像素梯度和对光度系数的导数
                     J->resF[idx] = residual * hw;
 
                     J->JIdx[0][idx] = hitColor[1];
@@ -204,13 +200,12 @@ namespace ldso {
             J->Jab2(1, 1) = JabJab_11;
 
             state_NewEnergyWithOutlier = energyLeft;
-            //outlier and occlusion detection see point management
-            if (energyLeft > std::max<float>(f->frameEnergyTH, ftarget->frameEnergyTH) || wJI2_sum < 2) 
-            {
+            // outlier and occlusion detection see point management, See Outlier and
+            // Occlusion Detection in Point Management
+            if (energyLeft > std::max<float>(f->frameEnergyTH, ftarget->frameEnergyTH) || wJI2_sum < 2) {
                 energyLeft = std::max<float>(f->frameEnergyTH, ftarget->frameEnergyTH);
                 state_NewState = ResState::OUTLIER;
-            } else 
-            {
+            } else {
                 state_NewState = ResState::IN;
             }
 
@@ -233,8 +228,7 @@ namespace ldso {
             __m128 delta_a = _mm_set1_ps((float) (dp[6]));
             __m128 delta_b = _mm_set1_ps((float) (dp[7]));
 
-            for (int i = 0; i < patternNum; i += 4) 
-            {
+            for (int i = 0; i < patternNum; i += 4) {
                 // PATTERN: rtz = resF - [JI*Jp Ja Jb]*delta.
                 __m128 rtz = _mm_load_ps(((float *) &J->resF) + i);
                 rtz = _mm_sub_ps(rtz, _mm_mul_ps(_mm_load_ps(((float *) (J->JIdx)) + i), Jp_delta_x));

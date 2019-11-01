@@ -776,7 +776,7 @@ namespace ldso {
         }
     }
 
-    // TODO:
+
     float FullSystem::optimize(int mnumOptIts) {
 
         // step1: 依据滑窗中关键帧的数目动态的调节优化的次数
@@ -815,14 +815,14 @@ namespace ldso {
         double lastEnergyL = calcLEnergy(); //calculate the point frame photometric error, L indicate landmark
         double lastEnergyM = calcMEnergy(); //calculate the marginalize prior error, M indicate marginalize
 
-        // apply res, calculate some hessian block
+        // apply res, calculate some hessian block, in other world, calculate Hessian block of the [pose, a, b]-[inverse depth]
         // 计算相对位姿，相对光度和逆深度的hessian block
         if (multiThreading)
             threadReduce.reduce(bind(&FullSystem::applyRes_Reductor, this, true, _1, _2, _3, _4), 0,
                                 activeResiduals.size(), 50);
         else
             applyRes_Reductor(true, 0, activeResiduals.size(), 0, 0);
-        // TODO:
+
         printOptRes(lastEnergy, lastEnergyL, lastEnergyM, 0, 0, frames.back()->frameHessian->aff_g2l().a,
                     frames.back()->frameHessian->aff_g2l().b);
 
@@ -1587,14 +1587,17 @@ namespace ldso {
 
         for (int k = min; k < max; k++) {
             shared_ptr<PointFrameResidual> r = activeResiduals[k];
+            // 求解每个pattern 对应的J_I, J_geo 和J_photo ,同时进行外点检测和剔除
             (*stats)[0] += r->linearize(Hcalib->mpCH);
-
+            // 固定线性化点, 边缘化时会用到, notice：只会对激活点对应的光度残差因子进行边缘化,
+            // 而已经边缘化的光度残差因子，会把他们放入到toRemove数组中
             if (fixLinearization) {
+                //update residual state and calculate Hessian block of the [pose, a, b]-[inverse depth]
                 r->applyRes(true);
 
                 if (r->isActive()) {
                     // TODO:
-                    // isNew is always ture
+                    // isNew is always true
                     if (r->isNew) {
                         shared_ptr<PointHessian> p = r->point.lock();
                         shared_ptr<FrameHessian> host = r->host.lock();
