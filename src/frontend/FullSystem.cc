@@ -810,13 +810,15 @@ namespace ldso {
         }
 
         LOG(INFO) << "active residuals: " << activeResiduals.size() << endl;
-
+        // step3: 计光度残差的雅克比矩阵J_I, J_geo, J_photo 和 error,同时剔除外点到I0, I1的约束
         Vec3 lastEnergy = linearizeAll(false);
+        // step3.1 计算视觉光度残差
         double lastEnergyL = calcLEnergy(); //calculate the point frame photometric error, L indicate landmark
+        // step3.2 计算先验残差
         double lastEnergyM = calcMEnergy(); //calculate the marginalize prior error, M indicate marginalize
 
         // apply res, calculate some hessian block, in other world, calculate Hessian block of the [pose, a, b]-[inverse depth]
-        // 计算相对位姿，相对光度和逆深度的hessian block
+        // step3.3 计算相对位姿，相对光度和逆深度的hessian block
         if (multiThreading)
             threadReduce.reduce(bind(&FullSystem::applyRes_Reductor, this, true, _1, _2, _3, _4), 0,
                                 activeResiduals.size(), 50);
@@ -830,8 +832,10 @@ namespace ldso {
         float stepsize = 1;
         VecX previousX = VecX::Constant(CPARS + 8 * frames.size(), NAN);
 
+        //step4 LM迭代优化
         for (int iteration = 0; iteration < mnumOptIts; iteration++) {
             // solve!
+            // step4.1 保存迭代之前的状态
             backupState(iteration != 0);
 
             solveSystem(iteration, lambda);
@@ -1515,12 +1519,13 @@ namespace ldso {
     }
 
     void FullSystem::solveSystem(int iteration, double lambda) {
-        // calculate the nullspace of the state variable
+        //step1 calculate the nullspace of the state variable
         ef->lastNullspaces_forLogging = getNullspaces(
                 ef->lastNullspaces_pose,
                 ef->lastNullspaces_scale,
                 ef->lastNullspaces_affA,
                 ef->lastNullspaces_affB);
+        //step2
         ef->solveSystemF(iteration, lambda, Hcalib->mpCH);
     }
 
@@ -1534,7 +1539,7 @@ namespace ldso {
                 toRemove[NUM_THREADS];
         for (int i = 0; i < NUM_THREADS; i++)
             toRemove[i].clear();
-
+        // step1: 求解每个pattern对应的jacobians:(J_I, J_geo, J_photo)和光度误差
         if (multiThreading) {
             threadReduce.reduce(
                     bind(&FullSystem::linearizeAll_Reductor, this, fixLinearization, toRemove, _1, _2, _3, _4),
@@ -1546,9 +1551,9 @@ namespace ldso {
             // 统计每个点的误差函数值
             lastEnergyP = stats[0];
         }
-        //设定阈值
+        //step2: 设定阈值
         setNewFrameEnergyTH();
-
+        //step3: 如果要边缘化视觉残差, 需要更新到激活点与I0, I1帧的残差状态
         if (fixLinearization) {
 
             for (auto r : activeResiduals) {
@@ -1558,7 +1563,7 @@ namespace ldso {
                 else if (ph->lastResiduals[1].first == r)
                     ph->lastResiduals[1].second = r->state_state;
             }
-
+            // 将边缘化的点到I0, I1视觉残差因子去掉
             int nResRemoved = 0;
             for (int i = 0; i < NUM_THREADS; i++) {
                 for (auto r : toRemove[i]) {
@@ -1588,15 +1593,15 @@ namespace ldso {
         for (int k = min; k < max; k++) {
             shared_ptr<PointFrameResidual> r = activeResiduals[k];
             // 求解每个pattern 对应的J_I, J_geo 和J_photo ,同时进行外点检测和剔除
+            // notice , J_geo在状态的线性化点求解, J_photo, J_I在当前状态进行求解
             (*stats)[0] += r->linearize(Hcalib->mpCH);
             // 固定线性化点, 边缘化时会用到, notice：只会对激活点对应的光度残差因子进行边缘化,
-            // 而已经边缘化的光度残差因子，会把他们放入到toRemove数组中
+            // TODO: 有待考虑,会把他们放入到toRemove数组中,意味着视觉残差中只有激活点的光度残差
             if (fixLinearization) {
                 //update residual state and calculate Hessian block of the [pose, a, b]-[inverse depth]
                 r->applyRes(true);
 
                 if (r->isActive()) {
-                    // TODO:
                     // isNew is always true
                     if (r->isNew) {
                         shared_ptr<PointHessian> p = r->point.lock();
@@ -1606,15 +1611,17 @@ namespace ldso {
                                         Vec3f(p->u, p->v, 1); // projected point assuming infinite depth.
                         Vec3f ptp = ptp_inf + host->targetPrecalc[target->idx].PRE_KtTll *
                                               p->idepth_scaled; // projected point with real depth.
+                        // TODO:
                         float relBS = 0.01 * ((ptp_inf.head<2>() / ptp_inf[2]) -
-                                              (ptp.head<2>() / ptp[2]))
-                                .norm(); // 0.01 = one pixel.
+                                              (ptp.head<2>() / ptp[2])).norm(); // 0.01 = one pixel.
+
                         if (relBS > p->maxRelBaseline)
                             p->maxRelBaseline = relBS;
 
                         p->numGoodResiduals++;
                     }
                 } else {
+                    //TODO:  有待考虑 将已经边缘化3d点的视觉残差扔掉,
                     toRemove[tid].push_back(activeResiduals[k]);
                 }
             }
@@ -1786,24 +1793,27 @@ namespace ldso {
             activeResiduals[k]->applyRes(true);
     }
 
-    std::vector<VecX> FullSystem::getNullspaces(std::vector<VecX> &nullspaces_pose, std::vector<VecX> &nullspaces_scale,
-                                                std::vector<VecX> &nullspaces_affA,
-                                                std::vector<VecX> &nullspaces_affB) {
+    std::vector<VecX> FullSystem::getNullspaces(
+            std::vector<VecX> &nullspaces_pose,
+            std::vector<VecX> &nullspaces_scale,
+            std::vector<VecX> &nullspaces_affA,
+            std::vector<VecX> &nullspaces_affB) {
 
         nullspaces_pose.clear();
         nullspaces_scale.clear();
         nullspaces_affA.clear();
         nullspaces_affB.clear();
 
-        int n = CPARS + frames.size() * 8;
+        int n = CPARS + frames.size() * 8; // 状态变量的个数
         std::vector<VecX> nullspaces_x0_pre;
+
         for (int i = 0; i < 6; i++) {
             VecX nullspace_x0(n);
             nullspace_x0.setZero();
             for (auto fr : frames) {
                 auto fh = fr->frameHessian;
-                nullspace_x0.segment<6>(CPARS + fh->idx * 8) = fh->nullspaces_pose.col(i);
-                nullspace_x0.segment<3>(CPARS + fh->idx * 8) *= SCALE_XI_TRANS_INVERSE;
+                nullspace_x0.segment<6>(CPARS + fh->idx * 8) = fh->nullspaces_pose.col(i); // pose scale_state 的零空间
+                nullspace_x0.segment<3>(CPARS + fh->idx * 8) *= SCALE_XI_TRANS_INVERSE;    // state 的零空间
                 nullspace_x0.segment<3>(CPARS + fh->idx * 8 + 3) *= SCALE_XI_ROT_INVERSE;
             }
             nullspaces_x0_pre.push_back(nullspace_x0);
@@ -1814,8 +1824,8 @@ namespace ldso {
             nullspace_x0.setZero();
             for (auto fr : frames) {
                 auto fh = fr->frameHessian;
-                nullspace_x0.segment<2>(CPARS + fh->idx * 8 + 6) = fh->nullspaces_affine.col(i).head<2>();
-                nullspace_x0[CPARS + fh->idx * 8 + 6] *= SCALE_A_INVERSE;
+                nullspace_x0.segment<2>(CPARS + fh->idx * 8 + 6) = fh->nullspaces_affine.col(i).head<2>(); // affine transform scale_state 的零空间
+                nullspace_x0[CPARS + fh->idx * 8 + 6] *= SCALE_A_INVERSE; // affine transform state 的零空间
                 nullspace_x0[CPARS + fh->idx * 8 + 7] *= SCALE_B_INVERSE;
             }
             nullspaces_x0_pre.push_back(nullspace_x0);
@@ -1829,8 +1839,8 @@ namespace ldso {
         nullspace_x0.setZero();
         for (auto fr : frames) {
             auto fh = fr->frameHessian;
-            nullspace_x0.segment<6>(CPARS + fh->idx * 8) = fh->nullspaces_scale;
-            nullspace_x0.segment<3>(CPARS + fh->idx * 8) *= SCALE_XI_TRANS_INVERSE;
+            nullspace_x0.segment<6>(CPARS + fh->idx * 8) = fh->nullspaces_scale;   // pose scale_state 尺度的零空间
+            nullspace_x0.segment<3>(CPARS + fh->idx * 8) *= SCALE_XI_TRANS_INVERSE; // pose state 尺度的零空间
             nullspace_x0.segment<3>(CPARS + fh->idx * 8 + 3) *= SCALE_XI_ROT_INVERSE;
         }
         nullspaces_x0_pre.push_back(nullspace_x0);

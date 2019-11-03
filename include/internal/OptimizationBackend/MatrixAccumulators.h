@@ -741,6 +741,16 @@ namespace ldso {
 
 
         /*
+         * hessian矩阵的数据结构：
+         *
+         *          H                                 | b
+         *         camera   pose    affine_a  affine_b| b
+         *  camera                |                      |
+         *  pose       Data       |     TopRight_Data    |
+         *  ——————————————————————————————————————————————
+         *  affine_a              |     BotRight_Data    |
+         *  affine_b              |                      |
+         *
          * computes the outer sum of 10x2 matrices, weighted with a 2x2 matrix:
          * 			H = [x y] * [a b; b c] * [x y]^T
          * (assuming x,y are column-vectors).
@@ -898,11 +908,13 @@ namespace ldso {
                     const float a,
                     const float b,
                     const float c) {
-
+                // H = [x y] * [a b; b c] * [x y]^T
+                // H_cc block = a*x4.T*x4 +c*y4.T*y4 + b(x4.Ty4 + y4.T*x4)
                 Data[0] += a * x4[0] * x4[0] + c * y4[0] * y4[0] + b * (x4[0] * y4[0] + y4[0] * x4[0]);
                 Data[1] += a * x4[1] * x4[0] + c * y4[1] * y4[0] + b * (x4[1] * y4[0] + y4[1] * x4[0]);
                 Data[2] += a * x4[2] * x4[0] + c * y4[2] * y4[0] + b * (x4[2] * y4[0] + y4[2] * x4[0]);
                 Data[3] += a * x4[3] * x4[0] + c * y4[3] * y4[0] + b * (x4[3] * y4[0] + y4[3] * x4[0]);
+                // H_c_pose = [x4; y4].T *[a b; b, c][x6; y6] dimension = [4x2 2x2 2X6]
                 Data[4] += a * x6[0] * x4[0] + c * y6[0] * y4[0] + b * (x6[0] * y4[0] + y6[0] * x4[0]);
                 Data[5] += a * x6[1] * x4[0] + c * y6[1] * y4[0] + b * (x6[1] * y4[0] + y6[1] * x4[0]);
                 Data[6] += a * x6[2] * x4[0] + c * y6[2] * y4[0] + b * (x6[2] * y4[0] + y6[2] * x4[0]);
@@ -987,6 +999,7 @@ namespace ldso {
                     const float TR00, const float TR10,
                     const float TR01, const float TR11,
                     const float TR02, const float TR12) {
+                // HC_ab, b_C
                 TopRight_Data[0] += x4[0] * TR00 + y4[0] * TR10;
                 TopRight_Data[1] += x4[0] * TR01 + y4[0] * TR11;
                 TopRight_Data[2] += x4[0] * TR02 + y4[0] * TR12;
@@ -1002,7 +1015,7 @@ namespace ldso {
                 TopRight_Data[9] += x4[3] * TR00 + y4[3] * TR10;
                 TopRight_Data[10] += x4[3] * TR01 + y4[3] * TR11;
                 TopRight_Data[11] += x4[3] * TR02 + y4[3] * TR12;
-
+                // H_pose_ab b_pose
                 TopRight_Data[12] += x6[0] * TR00 + y6[0] * TR10;
                 TopRight_Data[13] += x6[0] * TR01 + y6[0] * TR11;
                 TopRight_Data[14] += x6[0] * TR02 + y6[0] * TR12;
@@ -1046,7 +1059,7 @@ namespace ldso {
 
 
         private:
-            EIGEN_ALIGN16 float Data[60];
+            EIGEN_ALIGN16 float Data[60];  // H_[C, pose]_[C, pose]
             EIGEN_ALIGN16 float Data1k[60];
             EIGEN_ALIGN16 float Data1m[60];
 
@@ -1054,6 +1067,10 @@ namespace ldso {
             EIGEN_ALIGN16 float TopRight_Data1k[32];
             EIGEN_ALIGN16 float TopRight_Data1m[32];
 
+            // BotRight_Data 数据结构，存储6个元素
+            // [Ja.T * Ja, Ja.T*Jb,  Ja*error]
+            // [           Jb.T*Ja,  Jb*error]
+            // [                     error*error]
             EIGEN_ALIGN16 float BotRight_Data[8];
             EIGEN_ALIGN16 float BotRight_Data1k[8];
             EIGEN_ALIGN16 float BotRight_Data1m[8];

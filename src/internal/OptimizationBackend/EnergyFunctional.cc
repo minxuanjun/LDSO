@@ -251,14 +251,16 @@ namespace ldso {
             assert(EFAdjointsValid);
             assert(EFIndicesValid);
 
-            // construct matricies
+            //step1: construct matricies
             MatXX HL_top, HA_top, H_sc;
             VecX bL_top, bA_top, bM_top, b_sc;
-            
+            //step2.1 累计active point的
             accumulateAF_MT(HA_top, bA_top, multiThreading);
+            //step2.2 累计linear point的
             accumulateLF_MT(HL_top, bL_top, multiThreading);
+            //step2.3 累计marginalize point的
             accumulateSCF_MT(H_sc, b_sc, multiThreading);
-            // update the b of the prior 
+            //step2.4 update the b of the prior
             bM_top = (bM + HM * getStitchedDeltaF());
 
             MatXX HFinal_top;

@@ -6,8 +6,9 @@ namespace ldso {
     namespace internal {
 
         template<int mode>
-        void AccumulatedTopHessianSSE::addPoint(shared_ptr<PointHessian> p, EnergyFunctional const *const ef,
-                                                int tid) { // 0 = active, 1 = linearized, 2=marginalize
+        void AccumulatedTopHessianSSE::addPoint(
+                shared_ptr<PointHessian> p, EnergyFunctional const *const ef,
+                int tid) { // 0 = active, 1 = linearized, 2=marginalize
 
 
             assert(mode == 0 || mode == 1 || mode == 2);
@@ -18,7 +19,7 @@ namespace ldso {
             float bd_acc = 0;
             float Hdd_acc = 0;
             VecCf Hcd_acc = VecCf::Zero();
-
+            //step1: 遍历每一个点的的残差
             for (shared_ptr<PointFrameResidual> &r : p->residuals) {
                 if (mode == 0) {
                     if (r->isLinearized || !r->isActive())
@@ -36,15 +37,23 @@ namespace ldso {
 
                 shared_ptr<RawResidualJacobian> rJ = r->J;
                 int htIDX = r->hostIDX + r->targetIDX * nframes[tid];
-                Mat18f dp = ef->adHTdeltaF[htIDX];
+                Mat18f dp = ef->adHTdeltaF[htIDX]; // 取出光度误差对（线性化点的相对位姿, 相对光度系数)的增量
 
+                //step1.1 计算误差resApprox
                 VecNRf resApprox;
                 if (mode == 0)
-                    resApprox = rJ->resF; // evaluate at current state
+                    resApprox = rJ->resF; //active point error is evaluated at current state
                 if (mode == 2)
                     resApprox = r->res_toZeroF; //marginalize error
                 if (mode == 1) {
+                    // f(x+ delta) = f(x) + J*delta
                     // resApprox = res_toZeroF + res_on_linearpoint = resF
+                    // !!!notice:
+                    // 因为resF = f(x+delta)
+                    // res_toZeroF = f(x)
+                    // res_toZeroF = resF - J*delta 见 Residual.cpp 217 行的fixLinearizationF函数
+                    // J*delta = res_on_linearpoint
+                    // 所以一阶近似的resApprox 其实就是在当前状态求解得到的而误差f(x+delta),根本就不是一阶近似,作者写的挺迷的,
                     // compute Jp*delta
                     __m128 Jp_delta_x = _mm_set1_ps(
                             rJ->Jpdxi[0].dot(dp.head<6>()) + rJ->Jpdc[0].dot(dc) + rJ->Jpdd[0] * dd);
@@ -64,7 +73,7 @@ namespace ldso {
                     }
                 }
 
-                // need to compute JI^T * r, and Jab^T * r. (both are 2-vectors).
+                //ste1.2 need to compute JI^T * r, and Jab^T * r. (both are 2-vectors).
                 Vec2f JI_r(0, 0);
                 Vec2f Jab_r(0, 0);
                 float rr = 0;
@@ -75,23 +84,25 @@ namespace ldso {
                     Jab_r[1] += resApprox[i] * rJ->JabF[1][i];
                     rr += resApprox[i] * resApprox[i];
                 }
-                // calculate the H_{CPARS,xi}
+                //!!! Notice acc 存储着相机内参,相对位姿,相对光度系数的Hessian矩阵和系数b
+                //step1.3 calculate the H_{CPARS,xi} 存储((1+ 4+ 6)/2*(4+6) = 55)元素
                 acc[tid][htIDX].update(
                         rJ->Jpdc[0].data(), rJ->Jpdxi[0].data(),
                         rJ->Jpdc[1].data(), rJ->Jpdxi[1].data(),
                         rJ->JIdx2(0, 0), rJ->JIdx2(0, 1), rJ->JIdx2(1, 1));
-                
+                //step1.4 计算 H_ab_ab b_ab 和error×error
                 acc[tid][htIDX].updateBotRight(
                         rJ->Jab2(0, 0), rJ->Jab2(0, 1), Jab_r[0],
                         rJ->Jab2(1, 1), Jab_r[1], rr);
-
+                //step1.5 计算 H_[C, pose]_ab 和 b_[C, pose]
                 acc[tid][htIDX].updateTopRight(
                         rJ->Jpdc[0].data(), rJ->Jpdxi[0].data(),
                         rJ->Jpdc[1].data(), rJ->Jpdxi[1].data(),
                         rJ->JabJIdx(0, 0), rJ->JabJIdx(0, 1),
                         rJ->JabJIdx(1, 0), rJ->JabJIdx(1, 1),
                         JI_r[0], JI_r[1]);
-
+                //step1.6 累计inverse depth的 hessian 矩阵Hdd Hcd和系数b
+                //!!! Notice 为什么没有计算H_pose_d 和 H_ab_d? 其实在linearizeAll函数中已经计算过了
                 Vec2f Ji2_Jpdd = rJ->JIdx2 * rJ->Jpdd;
                 bd_acc += JI_r[0] * rJ->Jpdd[0] + JI_r[1] * rJ->Jpdd[1];
                 Hdd_acc += Ji2_Jpdd.dot(rJ->Jpdd);

@@ -52,7 +52,8 @@ namespace ldso {
                 float Ku, Kv;
                 Vec3f KliP;
 
-                // 重投影
+                // 计算J_geo 需要在使用线性化点的
+                //  重投影
                 shared_ptr<PointHessian> p = point.lock();
                 if (!projectPoint(p->u, p->v, p->idepth_zero_scaled, 0, 0, HCalib,
                                   PRE_RTll_0, PRE_tTll_0, drescale, u, v, Ku, Kv, KliP, new_idepth)) {
@@ -121,7 +122,7 @@ namespace ldso {
             float JabJab_00 = 0, JabJab_01 = 0, JabJab_11 = 0;
 
             float wJI2_sum = 0;
-            // 计算计算一个pattern中的J_I,
+            // 计算计算一个pattern中的J_I, notice 计算J_photo, 光度残差需要在当前状态求解
             for (int idx = 0; idx < patternNum; idx++) {
                 float Ku, Kv;
                 shared_ptr<PointHessian> p = point.lock();

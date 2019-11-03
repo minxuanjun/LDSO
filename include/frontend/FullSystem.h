@@ -238,6 +238,14 @@ namespace ldso {
 
         void applyRes_Reductor(bool copyJacobians, int min, int max, Vec10 *stats, int tid);
 
+        /**
+         * \brief 获取状态变量的零空间
+         * @param nullspaces_pose  pose state 的零空间
+         * @param nullspaces_scale pose state 尺度的零空间
+         * @param nullspaces_affA  affine transform cofficient A 的零空间
+         * @param nullspaces_affB  affine transform cofficient B 的零空间
+         * @return
+         */
         std::vector<VecX> getNullspaces(
             std::vector<VecX> &nullspaces_pose,
             std::vector<VecX> &nullspaces_scale,
