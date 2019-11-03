@@ -225,12 +225,15 @@ namespace ldso {
 
                 MatPCPC accH = MatPCPC::Zero();
 
+                //step1: 实现多线程求解的H_[camera, relative_poses, relative_, relative_b] 和b 的累加
                 for (int tid2 = 0; tid2 < toAggregate; tid2++) {
-                    acc[tid2][aidx].finish();
+                    acc[tid2][aidx].finish(); //求解 H_[camera, relative_poses, relative_, relative_b] 和b
                     if (acc[tid2][aidx].num == 0) continue;
                     accH += acc[tid2][aidx].H.cast<double>();
                 }
-
+                //step2: 将上一步求解的H_[camera, relative_poses, relative_a, relative_b]
+                // 根据伴随矩阵转换为H_[camera, absolute_pose, absolute_a, absolute_b]
+                //step2.1: 恢复绝对位姿的hessian block H_h_h, H_t_h, H_t_t
                 H[tid].block<8, 8>(hIdx, hIdx).noalias() +=
                         EF->adHost[aidx] * accH.block<8, 8>(CPARS, CPARS) * EF->adHost[aidx].transpose();
 
@@ -239,26 +242,28 @@ namespace ldso {
 
                 H[tid].block<8, 8>(hIdx, tIdx).noalias() +=
                         EF->adHost[aidx] * accH.block<8, 8>(CPARS, CPARS) * EF->adTarget[aidx].transpose();
-
+                //step2.2: 恢复绝对位姿和相机内参的hessian block H_h_c, H_t_c
                 H[tid].block<8, CPARS>(hIdx, 0).noalias() += EF->adHost[aidx] * accH.block<8, CPARS>(CPARS, 0);
 
                 H[tid].block<8, CPARS>(tIdx, 0).noalias() += EF->adTarget[aidx] * accH.block<8, CPARS>(CPARS, 0);
-
+                //step2.3: 恢复相机内参的hessian block H_c_c
                 H[tid].topLeftCorner<CPARS, CPARS>().noalias() += accH.block<CPARS, CPARS>(0, 0);
-
+                //step2.4: 恢复绝对位姿对应的b, b_h, b_t
                 b[tid].segment<8>(hIdx).noalias() += EF->adHost[aidx] * accH.block<8, 1>(CPARS, CPARS + 8);
 
                 b[tid].segment<8>(tIdx).noalias() += EF->adTarget[aidx] * accH.block<8, 1>(CPARS, CPARS + 8);
-
+                //step2.5 恢复相机内参的对应的b, b_c
                 b[tid].head<CPARS>().noalias() += accH.block<CPARS, 1>(0, CPARS + 8);
 
             }
 
-
+            // step3: 给状态加先验
             // only do this on one thread.
             if (min == 0 && usePrior) {
+                // 相机内参加先验
                 H[tid].diagonal().head<CPARS>() += EF->cPrior;
                 b[tid].head<CPARS>() += EF->cPrior.cwiseProduct(EF->cDeltaF.cast<double>());
+                // 相机的位姿和光度仿射变换系数加先验
                 for (int h = 0; h < nframes[tid]; h++) {
                     H[tid].diagonal().segment<8>(CPARS + h * 8) += EF->frames[h]->prior;
                     b[tid].segment<8>(CPARS + h * 8) += EF->frames[h]->prior.cwiseProduct(EF->frames[h]->delta_prior);

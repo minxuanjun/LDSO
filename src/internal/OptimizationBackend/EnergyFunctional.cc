@@ -257,10 +257,17 @@ namespace ldso {
             //step2.1 累计active point的
             accumulateAF_MT(HA_top, bA_top, multiThreading);
             //step2.2 累计linear point的
+            //!!! notice 其实和step2.1 是一回事，写的很迷
             accumulateLF_MT(HL_top, bL_top, multiThreading);
             //step2.3 累计marginalize point的
             accumulateSCF_MT(H_sc, b_sc, multiThreading);
-            //step2.4 update the b of the prior
+            //step2.4 update the b of the marginalization prior
+            //公式 f(x+delta+ delta_x) = f(x)+J*delta + J*delta_x
+            // f(x+delta) ~= f(x)+ J*delta
+            // J.T*J* delta_x = -J.T*(f(x)+ J*delta)
+            //  ||                       ||
+            //   H                       b
+
             bM_top = (bM + HM * getStitchedDeltaF());
 
             MatXX HFinal_top;
@@ -579,6 +586,8 @@ namespace ldso {
             } else {
                 accSSE_top_A->setZero(nFrames);
                 int cntPointAdded = 0;
+                //step1: 计算camera_intrinsic, relative_pose, relative_ab 变量的hessian 矩阵,
+                // 并累计激活点inverse depth的hessian
                 for (auto f : frames) {
                     for (shared_ptr<Feature> &feat: f->frame->features) {
                         if (feat->status == Feature::FeatureStatus::VALID && feat->point &&
@@ -589,6 +598,8 @@ namespace ldso {
                         }
                     }
                 }
+                //step2: 将上一步的relative_pose, relative_ab的Hessian 矩阵变为
+                // absolute_pose, absolute_ab 的Hessian 矩阵
                 accSSE_top_A->stitchDoubleMT(red, H, b, this, false, false);
                 resInA = accSSE_top_A->nres[0];
             }
@@ -629,6 +640,7 @@ namespace ldso {
                                  accSSE_bot, &allPoints, true, _1, _2, _3, _4), 0, allPoints.size(), 50);
                 accSSE_bot->stitchDoubleMT(red, H, b, this, true);
             } else {
+                // step1：
                 accSSE_bot->setZero(nFrames);
                 int cntPointAdded = 0;
                 for (auto f : frames) {

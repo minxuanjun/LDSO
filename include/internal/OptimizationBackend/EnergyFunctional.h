@@ -180,7 +180,7 @@ namespace ldso {
 
         private:
             /// I really don't know what are they doing in the private functions
-
+            // 获取camera, pose和 affine_ab的当前状态相对与线性点状态的偏移，主要用于更新先验的b
             VecX getStitchedDeltaF() const {
                 VecX d = VecX(CPARS + nFrames * 8);
                 d.head<CPARS>() = cDeltaF.cast<double>();

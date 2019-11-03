@@ -785,6 +785,7 @@ namespace ldso {
                 assert(numIn1k == 0);
 
                 int idx = 0;
+                // [camera, pose]的hessian block
                 for (int r = 0; r < 10; r++)
                     for (int c = r; c < 10; c++) {
                         H(r, c) = H(c, r) = Data1m[idx];
@@ -792,17 +793,19 @@ namespace ldso {
                     }
 
                 idx = 0;
+                // H_[camera pose]_ab b_[camera pose]
                 for (int r = 0; r < 10; r++)
                     for (int c = 0; c < 3; c++) {
                         H(r, c + 10) = H(c + 10, r) = TopRight_Data1m[idx];
                         idx++;
                     }
-
+                // H_ab_ab b_ab
                 H(10, 10) = BotRight_Data1m[0];
                 H(10, 11) = H(11, 10) = BotRight_Data1m[1];
                 H(10, 12) = H(12, 10) = BotRight_Data1m[2];
                 H(11, 11) = BotRight_Data1m[3];
                 H(11, 12) = H(12, 11) = BotRight_Data1m[4];
+                // error*error
                 H(12, 12) = BotRight_Data1m[5];
 
 

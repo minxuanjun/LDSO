@@ -88,16 +88,22 @@ namespace ldso {
                 } else {
                     H = MatXX::Zero(nframes[0] * 8 + CPARS, nframes[0] * 8 + CPARS);
                     b = VecX::Zero(nframes[0] * 8 + CPARS);
+                    // step1: 实现将[camera, relative_pose, relative_ab]的hessian矩阵恢复为
+                    // [camera, absolute_pose, absolute_ab]的hessian矩阵 和对应的系数b
+                    // notice: 由于hessian矩阵的对称性，只恢复了hessian的一部分
                     stitchDoubleInternal(&H, &b, EF, usePrior, 0, nframes[0] * nframes[0], 0, -1);
                 }
-
+                //step2: 将上面构建的部分hessian矩阵利用对称性填充为一个完整的hessin
                 // make diagonal by copying over parts.
                 for (int h = 0; h < nframes[0]; h++) {
                     int hIdx = CPARS + h * 8;
+                    //TODO： noalias 表示没有矩阵混淆
                     H.block<CPARS, 8>(0, hIdx).noalias() = H.block<8, CPARS>(hIdx, 0).transpose();
-
+                    //由于hessian矩阵的对称性,所以只需要求得Hessian矩阵的上三角部分,然后利用对称性求得下三角部分
                     for (int t = h + 1; t < nframes[0]; t++) {
                         int tIdx = CPARS + t * 8;
+                        //!!! notice, 这一步很重要,因为step1 恢复的H_host_target或者H_target_host 有一部分H的下三角部分
+                        //所以需要 H_host_target 和 H_target_host.T 累加
                         H.block<8, 8>(hIdx, tIdx).noalias() += H.block<8, 8>(tIdx, hIdx).transpose();
                         H.block<8, 8>(tIdx, hIdx).noalias() = H.block<8, 8>(hIdx, tIdx).transpose();
                     }
@@ -118,7 +124,18 @@ namespace ldso {
 
 
         private:
-
+            /**
+             * \brief 主要实现将[camera, relative_pose, relative_ab]的hessian矩阵恢复为
+             * [camera, absolute_pose, absolute_ab]的hessian矩阵,switchDouble 表达的意思很生动
+             * @param H
+             * @param b
+             * @param EF
+             * @param usePrior
+             * @param min
+             * @param max
+             * @param stats
+             * @param tid
+             */
             void stitchDoubleInternal(
                     MatXX *H, VecX *b, EnergyFunctional const *const EF, bool usePrior,
                     int min, int max, Vec10 *stats, int tid);

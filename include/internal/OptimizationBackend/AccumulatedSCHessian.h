@@ -13,7 +13,17 @@ namespace ldso {
 
         class EnergyFunctional;
         class PointHessian;
-
+        /**
+         * \brief
+         * marginalize prior 的hessian矩阵数据结构
+         *            camera  pose a b | b
+         *  camera    Hcc    |         | bc
+         *  ---------------------------|
+         *  pose             |         |
+         *  a         E      |    D    |
+         *  b                |         |
+         *  ---------------------------
+         */
         class AccumulatedSCHessianSSE {
         public:
             EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
@@ -40,9 +50,9 @@ namespace ldso {
                     if (accE[tid] != 0) delete[] accE[tid];
                     if (accEB[tid] != 0) delete[] accEB[tid];
                     if (accD[tid] != 0) delete[] accD[tid];
-                    accE[tid] = new AccumulatorXX<8, CPARS>[n * n];
-                    accEB[tid] = new AccumulatorX<8>[n * n];
-                    accD[tid] = new AccumulatorXX<8, 8>[n * n * n];
+                    accE[tid] = new AccumulatorXX<8, CPARS>[n * n]; //why: why n*n? 因为是相对位姿，所以存储n*n个相对位姿的个数的元素
+                    accEB[tid] = new AccumulatorX<8>[n * n];        //同理
+                    accD[tid] = new AccumulatorXX<8, 8>[n * n * n]; //TODO:
                 }
                 accbc[tid].initialize();
                 accHcc[tid].initialize();
