@@ -20,19 +20,24 @@ namespace ldso {
                 p->maxRelBaseline = 0;
                 return;
             }
-
-            float H = p->Hdd_accAF + p->Hdd_accLF + p->priorF;
-            if (H < 1e-10) H = 1e-10;
+            //!!!notice 3d点的priorF只有在初始化的的第一帧才有
+            //step1: 计算Hdd, bd
+            float H = p->Hdd_accAF + p->Hdd_accLF + p->priorF;  // point 的hessian Hdd是激活点的hessian + 线性化的hessian + 先验
+            if (H < 1e-10) H = 1e-10; // 避免hessian值过小，造成数值求解的不稳定
             p->idepth_hessian = H;
             p->HdiF = 1.0 / H;
             p->bdSumF = p->bd_accAF + p->bd_accLF;
-            if (shiftPriorToZero) p->bdSumF += p->priorF * p->deltaF;
+            if (shiftPriorToZero) p->bdSumF += p->priorF * p->deltaF; // bd 加先验的误差
+            // step2: 计算Hcc_schur 和 bc_schur
             VecCf Hcd = p->Hcd_accAF + p->Hcd_accLF;
+            // step2.1： 求Hcc的Schur complement 的Hcc_schur= Hcd*{Hdd}^{-1}*{Hcd}^T
             accHcc[tid].update(Hcd, Hcd, p->HdiF);
+            // step2.2: 求bc的Schur complement bc_schur = Hcd*{Hdd}^{-1}*bd
             accbc[tid].update(Hcd, p->bdSumF * p->HdiF);
 
             assert(std::isfinite((float) (p->HdiF)));
-
+            // step3: 计算 H_[relative_pose, relative_ab]_[relative_pose, relative_ab]
+            // , H_[relative_pose, relative_ab]_c hessian block的Schur complement
             int nFrames2 = nframes[tid] * nframes[tid];
             for (auto r1 : p->residuals) {
                 if (!r1->isActive()) continue;
@@ -41,11 +46,13 @@ namespace ldso {
                 for (auto r2 : p->residuals) {
                     if (!r2->isActive())
                         continue;
-
+                    // step3.1 计算 H_[relative_pose, relative_ab]_[relative_pose, relative_ab]的Schur complement
+                    // !!! notice 这个存储器写的绝了!!!
                     accD[tid][r1ht + r2->targetIDX * nFrames2].update(r1->JpJdF, r2->JpJdF, p->HdiF);
                 }
-
+                // step3.2 计算H_[relative_pose, relative_ab]_c 的Schur complement
                 accE[tid][r1ht].update(r1->JpJdF, Hcd, p->HdiF);
+                // step 计算b_[relative_pose, relative_ab] 的Schur complement
                 accEB[tid][r1ht].update(r1->JpJdF, p->HdiF * p->bdSumF);
             }
         }
