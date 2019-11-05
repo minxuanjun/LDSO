@@ -288,6 +288,16 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
     MatXX HFinal_top;
     VecX bFinal_top;
 
+    //正交投影法,最小化误差在零空间的增量,而不是全局空间的增量,参考smsckf的将3d点观测的左零空间
+    //error =  ||Q^T(A*delta - b)||^2
+    //      =  ||Q^T*A*delta - Q^T*b||^2
+    //对其进行求导的
+    // A^T*Q* Q^T*A*delta = A^T*Q*Q^T*b
+    // 对式子左右两侧同时乘以Q*Q^T
+    //Q*Q^T * A^T* Q*Q^T *A* delta = Q* Q^T * A^T* Q*Q^T *b
+    //Q*Q^T*A^T*A*delta = Q* Q^T*b
+    //因为Q是正交矩阵所以A^T* Q*Q^T*A 化简为A^T*A,其中Q使用SVD的奇异值分解近似求解得到
+    //
     if (setting_solverMode & SOLVER_ORTHOGONALIZE_SYSTEM) {
         // have a look if prior is there.
         bool haveFirstFrame = false;
@@ -310,12 +320,12 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
             HFinal_top(i, i) *= (1 + lambda);
     }
     else {
-        HFinal_top = HL_top + HM + HA_top;
-        bFinal_top = bL_top + bM_top + bA_top - b_sc;
+        HFinal_top = HL_top + HM + HA_top;            // 整个系统为3d点未舒尔补的H_alpha_alpha
+        bFinal_top = bL_top + bM_top + bA_top - b_sc; // 整个系统舒尔补后的b_alpha_alpha
 
         lastHS = HFinal_top - H_sc;
         lastbS = bFinal_top;
-
+        //  使用LM 算法给hessian矩阵对角线添加元素
         for (int i = 0; i < 8 * nFrames + CPARS; i++)
             HFinal_top(i, i) *= (1 + lambda);
         HFinal_top -= H_sc * (1.0f / (1 + lambda));
@@ -323,6 +333,9 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
 
     // get the result
     VecX x;
+    // 使用SVD方法进行求解
+    // Hx=b, H = U*Sigma*V.T
+    // x = V * Sigma^{-1} *U.T * b
     if (setting_solverMode & SOLVER_SVD) {
         VecX SVecI = HFinal_top.diagonal().cwiseSqrt().cwiseInverse();
         MatXX HFinalScaled = SVecI.asDiagonal() * HFinal_top * SVecI.asDiagonal();
@@ -330,6 +343,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
         Eigen::JacobiSVD<MatXX> svd(HFinalScaled, Eigen::ComputeThinU | Eigen::ComputeThinV);
 
         VecX S = svd.singularValues();
+
         double minSv = 1e10, maxSv = 0;
         for (int i = 0; i < S.size(); i++) {
             if (S[i] < minSv) minSv = S[i];
@@ -339,11 +353,12 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
         VecX Ub = svd.matrixU().transpose() * bFinalScaled;
         int setZero = 0;
         for (int i = 0; i < Ub.size(); i++) {
+            //TODO： 可能是防止由于特征值太小造成求解的不稳定
             if (S[i] < setting_solverModeDelta * maxSv) {
                 Ub[i] = 0;
                 setZero++;
             }
-
+            //TODO： 为啥子,为啥将Ub的最后7个变量的Ub置为0
             if ((setting_solverMode & SOLVER_SVD_CUT7) && (i >= Ub.size() - 7)) {
                 Ub[i] = 0;
                 setZero++;
@@ -362,7 +377,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
         x = SVecI.asDiagonal() * HFinalScaled.ldlt().solve(
                 SVecI.asDiagonal() * bFinal_top);//  SVec.asDiagonal() * svd.matrixV() * Ub;
                 */
-
+        //由于hessian矩阵的对称性，可以使用LDLT求解方程
         x = SVecI.asDiagonal() * HFinalScaled.ldlt().solve(
             SVecI.asDiagonal() * bFinal_top);//  SVec.asDiagonal() * svd.matrixV() * Ub;
 
@@ -668,9 +683,11 @@ void EnergyFunctional::accumulateSCF_MT(MatXX &H, VecX &b, bool MT)
         accSSE_bot->stitchDoubleMT(red, H, b, this, true);
     }
     else {
-        // step1：
+        // step1: 给hessian block累加器分配内存，并进行初始化为0
         accSSE_bot->setZero(nFrames);
         int cntPointAdded = 0;
+        // step2: 边缘化3d点, 计算H_[relative_pose, relative_ab]_[relative_pose, relative_ab]
+        // , H_[relative_pose, relative_ab]_c hessian block的Schur complement
         for (auto f : frames) {
             for (auto feat: f->frame->features) {
                 if (feat->status == Feature::FeatureStatus::VALID &&
@@ -681,6 +698,7 @@ void EnergyFunctional::accumulateSCF_MT(MatXX &H, VecX &b, bool MT)
                 }
             }
         }
+        // step3: 将step2 构造的相对状态的hessian block 转化为绝对状态的hessian block
         accSSE_bot->stitchDoubleMT(red, H, b, this, false);
     }
 }
@@ -755,6 +773,7 @@ void EnergyFunctional::calcLEnergyPt(int min, int max, Vec10 *stats, int tid)
     (*stats)[0] += E.A;
 }
 
+
 void EnergyFunctional::orthogonalize(VecX *b, MatXX *H)
 {
 
@@ -762,14 +781,30 @@ void EnergyFunctional::orthogonalize(VecX *b, MatXX *H)
     ns.insert(ns.end(), lastNullspaces_pose.begin(), lastNullspaces_pose.end());
     ns.insert(ns.end(), lastNullspaces_scale.begin(), lastNullspaces_scale.end());
 
-    // make Nullspaces matrix
-    MatXX N(ns[0].rows(), ns.size());
+    //step1: make nullspaces jacobians matrix N
+    // 将所有零空间的向量按列stack,组合成一个大矩阵, 使用
+    // ns.size() 7, VecX size 为8*n,
+    MatXX N(ns[0].rows(), ns.size()); // dimension [8*n, 7]
     for (unsigned int i = 0; i < ns.size(); i++)
         N.col(i) = ns[i].normalized();
+    // step2 : calculate N*(N^T*N)^{-1}*N^T = N*(Npi)^T
+    // 对N进行SVD分解可以得到
+    // N = U*Sigma*V^T, U*U^T = I, V*V^T =I, U^T = U^{-1}, V^T = V^{-1}
+    // (Npi)^T = (N^T*N)^{-1}*N^T = (V*Sigma^T*U^T*U*Sigma*V^T)^{-1}* V*Sigma^T*U^T
+    //                            = (V*Sigma^T*Sigma*V^T)^{-1} * V*Sigma^T*U^T
+    //                            = V*(Sigma^T*Sigma)^{-1}*V^{-1}*V*Sigma^T*U^T
+    //                            = V*(Sigma^T*Sigma)^{-1}*Sigma^T*U^T
+    //                            = (U*Sigma*(Sigma^T*Sigma)^{-1}^T*V^T)^T
+    //                            = (U*Sigma*(Sigma^T*Sigma)^T^{-1}*V)^T
+    //                            = (U*Sigma*(Sigma^T*Sigma)^{-1}*V^T)^T
+    // Npi = U*Sigma*(Sigma^T*Sigma)^{-1}*V^T
+    // 其中Sigma*(Sigma^T*Sigma)^{-1} 维度为 [8n, 7]*([7, 8n]*[8n, 7])^{-1} = [8n, 7]
+    // 其对角线的元素是Sigma的奇异值的逆
 
-    // compute Npi := N * (N' * N)^-1 = pseudo inverse of N.
+    //step2.1 对N进行奇异值分解
     Eigen::JacobiSVD<MatXX> svdNN(N, Eigen::ComputeThinU | Eigen::ComputeThinV);
 
+    //step2.2 求N奇异值的逆
     VecX SNN = svdNN.singularValues();
     double minSv = 1e10, maxSv = 0;
     for (int i = 0; i < SNN.size(); i++) {
@@ -781,11 +816,13 @@ void EnergyFunctional::orthogonalize(VecX *b, MatXX *H)
             SNN[i] = 1.0 / SNN[i];
         else SNN[i] = 0;
     }
-
-    MatXX Npi = svdNN.matrixU() * SNN.asDiagonal() * svdNN.matrixV().transpose();    // [dim] x 9.
+    // step2.3 求Npi
+    MatXX Npi = svdNN.matrixU() * SNN.asDiagonal() * svdNN.matrixV().transpose();    // [8n, 7].
+    // step3.1 求N*(N^T*N)^{-1}*N^T
     MatXX NNpiT = N * Npi.transpose();    // [dim] x [dim].
+    // step3.2 实加0.5 * (NNpiT + NNpiT.transpose())保证矩阵的对称行
     MatXX NNpiTS = 0.5 * (NNpiT + NNpiT.transpose());    // = N * (N' * N)^-1 * N'.
-
+    // step4 计算变换化零空间的H, b
     if (b != 0) *b -= NNpiTS * *b;
     if (H != 0) *H -= NNpiTS * *H * NNpiTS;
 }

@@ -157,11 +157,12 @@ public:
     std::vector<shared_ptr<FrameHessian>> frames;
     int nPoints = 0, nFrames = 0, nResiduals = 0;
 
-    MatXX HM = MatXX::Zero(CPARS, CPARS);   // frame-frame H matrix
-    VecX bM = VecX::Zero(CPARS);    // frame-frame b vector
+    MatXX HM = MatXX::Zero(CPARS, CPARS);   //边缘化的先验 frame-frame H matrix
+    VecX bM = VecX::Zero(CPARS);    //边缘化的先验 frame-frame b vector
 
     int resInA = 0, resInL = 0, resInM = 0;
 
+    // LM 优化过程中保存上一时刻的舒尔补后Hessian block, b和优化变量的状态
     MatXX lastHS;
     VecX lastbS;
     VecX lastX;
@@ -236,6 +237,22 @@ private:
      */
     void calcLEnergyPt(int min, int max, Vec10 *stats, int tid);
 
+    /**
+     * \brief 实现零空间边缘化
+     * 数学表达形式
+     * f(x)^2 = ||Jx*delta_x + J_null*delta_null- b||^2
+     * delta_x 的维度为8n, delta_null 维度为7 即(全局的旋转+平移+尺度)
+     * Jx的维度为[8n, 8n], J_null的维度[8n, 7]
+     * 将delta_null边缘化得到
+     * H_schur = Jx^TJx - Jx^T*J_null*(J_null^T*J_null)^{-1}*J_null^TJx
+     *         = Jx^T*Jx(I - J_null*(J_null^T*J_null)^{-1}*J_null^T)
+     * b_shcur = Jx^T*b - Jx^T * J_null* (J_null^T*J_null)^{-1} * J_null^T*b
+     *         = Jx^T*b(I - J_null* (J_null^T*J_null)^{-1} * J_null^T)
+     * notice: J_null 在函数具体实现中用是用N表示的,
+     * J_null* (J_null^T*J_null)^{-1} * J_null^T 在函数实现中用N*(Npi)^T表示
+     * @param b
+     * @param H
+     */
     void orthogonalize(VecX *b, MatXX *H);
 
     // don't use shared_ptr to handle dynamic arrays
