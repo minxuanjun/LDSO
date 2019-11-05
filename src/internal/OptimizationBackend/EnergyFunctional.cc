@@ -288,16 +288,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
     MatXX HFinal_top;
     VecX bFinal_top;
 
-    //正交投影法,最小化误差在零空间的增量,而不是全局空间的增量,参考smsckf的将3d点观测的左零空间
-    //error =  ||Q^T(A*delta - b)||^2
-    //      =  ||Q^T*A*delta - Q^T*b||^2
-    //对其进行求导的
-    // A^T*Q* Q^T*A*delta = A^T*Q*Q^T*b
-    // 对式子左右两侧同时乘以Q*Q^T
-    //Q*Q^T * A^T* Q*Q^T *A* delta = Q* Q^T * A^T* Q*Q^T *b
-    //Q*Q^T*A^T*A*delta = Q* Q^T*b
-    //因为Q是正交矩阵所以A^T* Q*Q^T*A 化简为A^T*A,其中Q使用SVD的奇异值分解近似求解得到
-    //
+    
     if (setting_solverMode & SOLVER_ORTHOGONALIZE_SYSTEM) {
         // have a look if prior is there.
         bool haveFirstFrame = false;
