@@ -119,7 +119,25 @@ namespace ldso {
             float priorF = 0;
             float deltaF = 0;
 
-            // H and b blocks
+            //TODO:
+            //状态量               camera_intrinsic |  relative_state |  inverse_depth      |     b
+            //                                     |                 |                     |
+            // camera_intrinsic    Hcc             |                 |    Hcd_accLF        |
+            //                                     |                 |    Hcd_accAF        |
+            //--------------------------------------------------------------------------------------
+            //   relative_state                    |                 |      JpJdF          |
+            //                                     |                 | (存储在每个点的残差中,即|
+            //                                                       |   PointFrameResidual|
+            //---------------------------------------------------------------------------------------
+            //    inverse_depth                    |                 |    Hdd_accAF        |    bd_accAF
+            //                                     |                 |        +            |        +
+            //                                     |                 |    Hdd_accLF        |    bd_accLF
+            //                                     |                 |        +            |        +
+            //                                     |                 |      priorF         |   priorF * p->deltaF
+            //                                     |                 |        ||           |        ||
+            //                                     |                 |   (HdiF)^{-1}       |       bdSumF
+
+            // H and b blocks, 如上图所示
             float bdSumF = 0;
             float HdiF = 0;
             float Hdd_accLF = 0;

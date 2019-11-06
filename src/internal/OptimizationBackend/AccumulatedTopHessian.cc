@@ -234,6 +234,8 @@ namespace ldso {
                 //step2: 将上一步求解的H_[camera, relative_poses, relative_a, relative_b]
                 // 根据伴随矩阵转换为H_[camera, absolute_pose, absolute_a, absolute_b]
                 //step2.1: 恢复绝对位姿的hessian block H_h_h, H_t_h, H_t_t
+                //Notice: DSO 在这里将具有Scale 属性相对变量的正规方程变成了具有没有scale属性的绝对位姿的正规矩阵
+                // Scale 相当于给优化变量赋予了不同的权重
                 H[tid].block<8, 8>(hIdx, hIdx).noalias() +=
                         EF->adHost[aidx] * accH.block<8, 8>(CPARS, CPARS) * EF->adHost[aidx].transpose();
 

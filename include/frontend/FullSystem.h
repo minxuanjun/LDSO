@@ -209,6 +209,7 @@ namespace ldso {
 
         /**
          * linearize all the residuals
+         * 计光度残差的雅克比矩阵J_I, J_geo, J_photo 和 error,同时剔除外点到I0, I1的约束
          * @param fixLinearization if true, fix the jacobians after this linearization
          * @return
          */
@@ -222,6 +223,15 @@ namespace ldso {
 
         /// step from the backup data
         /// called in optimization
+        /**
+         *
+         * @param stepfacC 相机内参增量更新的步长
+         * @param stepfacT 相机位姿平移分量更新的步长
+         * @param stepfacR 相机位姿旋转分量更新的步长
+         * @param stepfacA 光度仿射变化系数a增量更新的步长
+         * @param stepfacD 光度仿射变换系数b增量更新的步长
+         * @return 是否增量足够小
+         */
         bool doStepFromBackup(float stepfacC, float stepfacT, float stepfacR, float stepfacA, float stepfacD);
 
         /// set the current state into backup
@@ -231,9 +241,11 @@ namespace ldso {
         void loadSateBackup();
 
         /// energy computing functions, called in optimization
+        // calculate the point frame photometric error, L indicate landmark
         double calcLEnergy();
 
         /// energy computing functions, called in optimization
+        // calculate the marginalize prior error, M indicate marginalize
         double calcMEnergy();
 
         void applyRes_Reductor(bool copyJacobians, int min, int max, Vec10 *stats, int tid);

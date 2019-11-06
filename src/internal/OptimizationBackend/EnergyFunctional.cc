@@ -288,9 +288,11 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
     MatXX HFinal_top;
     VecX bFinal_top;
 
-    
+    //step2.5采用LM算法修改Hessian矩阵H
+
     if (setting_solverMode & SOLVER_ORTHOGONALIZE_SYSTEM) {
         // have a look if prior is there.
+        // method1:采用零空间边缘化的方法来修改hessian矩阵
         bool haveFirstFrame = false;
         for (auto f : frames)
             if (f->frameID == 0)
@@ -298,20 +300,22 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
 
         MatXX HT_act = HL_top + HA_top - H_sc;
         VecX bT_act = bL_top + bA_top - b_sc;
-
+        // 滑窗里没有第一帧时,就需要考虑零空间的飘逸对视觉残差构建的能量函数的影响,
+        // 通过将零空间的增量边缘化,来抑制零空间的飘逸
         if (!haveFirstFrame)
             orthogonalize(&bT_act, &HT_act);
-
+        // 加先验
         HFinal_top = HT_act + HM;
         bFinal_top = bT_act + bM_top;
         lastHS = HFinal_top;
         lastbS = bFinal_top;
-
+        // 使用LM算法修改Hssian矩阵的对角线元素
         for (int i = 0; i < 8 * nFrames + CPARS; i++)
             HFinal_top(i, i) *= (1 + lambda);
     }
     else {
-        HFinal_top = HL_top + HM + HA_top;            // 整个系统为3d点未舒尔补的H_alpha_alpha
+        // method2:采用正常的方法构建hessian矩阵
+        HFinal_top = HL_top + HM + HA_top;            // 3d点未舒尔补整个系统的H_alpha_alpha
         bFinal_top = bL_top + bM_top + bA_top - b_sc; // 整个系统舒尔补后的b_alpha_alpha
 
         lastHS = HFinal_top - H_sc;
@@ -322,9 +326,10 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
         HFinal_top -= H_sc * (1.0f / (1 + lambda));
     }
 
+    // step3: 使用SVD或者LDLT求解方程
     // get the result
     VecX x;
-    // 使用SVD方法进行求解
+    //method1: 使用SVD方法进行求解
     // Hx=b, H = U*Sigma*V.T
     // x = V * Sigma^{-1} *U.T * b
     if (setting_solverMode & SOLVER_SVD) {
@@ -360,7 +365,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
 
     }
     else {
-
+        // method2: 使用LDLT求解方程
         VecX SVecI = (HFinal_top.diagonal() + VecX::Constant(HFinal_top.cols(), 10)).cwiseSqrt().cwiseInverse();
         MatXX HFinalScaled = SVecI.asDiagonal() * HFinal_top * SVecI.asDiagonal();
 
@@ -374,15 +379,33 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, shared_ptr<Cal
 
     }
 
+    // step4: 判断是否减掉增量在零空间的分量
     if ((setting_solverMode & SOLVER_ORTHOGONALIZE_X) ||
         (iteration >= 2 && (setting_solverMode & SOLVER_ORTHOGONALIZE_X_LATER))) {
         VecX xOld = x;
+        // 将求得的的状态增量x减去其在零空间的分量
+        // 求得的增量 x 在零空间的分量为x_null, 在非零空间的分量是x_nonnull,即
+        // x = x_null + x_nonnull
+        // x_null 与x_nonnull 线性无关, 即x_null^T*x_nonnull = 0
+        // J_nll*delta_null = x_null, 其中delta_null 是零空间的增量7个维度(全局的平移,旋转, 尺度),
+        // J_nll是滑窗中所有帧的状态x对零空间delta_null的导数,维度为 [8n, 7]
+        // delta_null = (J_nll^T*J_null)^{-1}(J_nll)^T*x_null
+        // J_null*delta_null = J_null*(J_nll^T*J_null)^{-1}(J_nll)^T*x_null
+        //      ||
+        //    x_null         = J_null*(J_nll^T*J_null)^{-1}(J_nll)^T*x_null
+        // 因此J_null*(J_nll^T*J_null)^{-1}(J_nll)^T 是x_null的一组单位正交基,
+        // 下面我们用Q表示J_null*(J_nll^T*J_null)^{-1}(J_nll)^T
+        // Qx = Q*x_null + Q*x_nonnull
+        // 因为x_null与x_nonnull线性无关,所以Q*x_nonnull = 0
+        // 所以Qx = Q*x_null = x_null
+        // 所以x_nonnull = x - x_null = x - Qx
         orthogonalize(&x, 0);
     }
-
+    // step5: 记录上一时刻的状态的LM的惩罚因子lambda
     lastX = x;
-
     currentLambda = lambda;
+    // step6. 将求解出的增量x_c, x_absolute_pose, x_absolute_ab带入利用相对位姿构建hessian矩阵求解3d点
+    // 逆深度的更新
     resubstituteF_MT(x, HCalib, multiThreading);
     currentLambda = 0;
 
@@ -509,8 +532,8 @@ void EnergyFunctional::setAdjointsF(shared_ptr<CalibHessian> Hcalib)
             AT(7, 7) = -1;
             AH(7, 7) = affLL[0];
 
-            // TODO: SCALE_* indicate the weights
-            // 后端优化会对的
+            // TODO: 乘以SCALE_* 是因为后端滑窗优化的变量乘以SCALE_*_INVERSE的
+            // 后端优化会用的
             AH.block<3, 8>(0, 0) *= SCALE_XI_TRANS;
             AH.block<3, 8>(3, 0) *= SCALE_XI_ROT;
             AH.block<1, 8>(6, 0) *= SCALE_A;
@@ -547,10 +570,12 @@ void EnergyFunctional::resubstituteF_MT(const VecX &x, shared_ptr<CalibHessian> 
     assert(x.size() == CPARS + nFrames * 8);
 
     VecXf xF = x.cast<float>();
+    // step1 : 求得相机参数的增量
     HCalib->step = -x.head<CPARS>();
 
     Mat18f *xAd = new Mat18f[nFrames * nFrames];
     VecCf cstep = xF.head<CPARS>();
+    // step2: 使用伴随矩阵将绝对位姿的增量转换为相对位姿的增量
     for (auto h : frames) {
         h->step.head<8>() = -x.segment<8>(CPARS + 8 * h->idx);
         h->step.tail<2>().setZero();
@@ -560,7 +585,7 @@ void EnergyFunctional::resubstituteF_MT(const VecX &x, shared_ptr<CalibHessian> 
                 xF.segment<8>(CPARS + 8 * h->idx).transpose() * adHostF[h->idx + nFrames * t->idx]
                     + xF.segment<8>(CPARS + 8 * t->idx).transpose() * adTargetF[h->idx + nFrames * t->idx];
     }
-
+    // step3: 求解3点逆深度的增量
     if (MT)
         red->reduce(bind(&EnergyFunctional::resubstituteFPt,
                          this, cstep, xAd, _1, _2, _3, _4), 0, allPoints.size(), 50);
@@ -574,9 +599,11 @@ void EnergyFunctional::resubstituteFPt(const VecCf &xc, Mat18f *xAd, int min, in
 {
 
     for (int k = min; k < max; k++) {
+
         auto p = allPoints[k];
 
         int ngoodres = 0;
+        // step1: 判断一个点的是否被观测到,如果没有被观测到,不更新该点
         for (auto r : p->residuals)
             if (r->isActive())
                 ngoodres++;
@@ -585,7 +612,13 @@ void EnergyFunctional::resubstituteFPt(const VecCf &xc, Mat18f *xAd, int min, in
             p->step = 0;
             continue;
         }
-
+        // step2: 求解3d点逆深度的增量
+        // 3d点逆深度更新采用的公式是
+        // -H_dc*xc - Hd_d_[relative_pose]*x_relative_pose - Hdd*x_dd = b
+        // !!!前面求得状态增量 x_c' x_relative_pose' 是负增量, x_c',x_relative_pose'在程序中分别用xc, xAd[r->hostIDX * nFrames + r->targetIDX]
+        // 因此求得的真实的增量是xc = -xc', x_relative_pose =-x_relative_pose'
+        // H_dc*xc' + Hd_d_[relative_pose]*x_relative_pose - Hdd*x_dd = b
+        // -Hdd*x_dd = b - H_dc*x_c' - Hd_d_[relative_pose]*x_relative_pose'
         float b = p->bdSumF;
         b -= xc.dot(p->Hcd_accAF + p->Hcd_accLF);
 
@@ -764,7 +797,6 @@ void EnergyFunctional::calcLEnergyPt(int min, int max, Vec10 *stats, int tid)
     (*stats)[0] += E.A;
 }
 
-
 void EnergyFunctional::orthogonalize(VecX *b, MatXX *H)
 {
 
@@ -813,7 +845,7 @@ void EnergyFunctional::orthogonalize(VecX *b, MatXX *H)
     MatXX NNpiT = N * Npi.transpose();    // [dim] x [dim].
     // step3.2 实加0.5 * (NNpiT + NNpiT.transpose())保证矩阵的对称行
     MatXX NNpiTS = 0.5 * (NNpiT + NNpiT.transpose());    // = N * (N' * N)^-1 * N'.
-    // step4 计算变换化零空间的H, b
+    // step4 计算减去零空间的增益
     if (b != 0) *b -= NNpiTS * *b;
     if (H != 0) *H -= NNpiTS * *H * NNpiTS;
 }

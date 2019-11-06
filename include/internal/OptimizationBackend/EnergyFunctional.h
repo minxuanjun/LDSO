@@ -238,15 +238,21 @@ private:
     void calcLEnergyPt(int min, int max, Vec10 *stats, int tid);
 
     /**
-     * \brief 实现零空间边缘化
+     * TODO:感觉我在胡说,希望大佬能够解答疑惑
+     * \brief TODO: 实现零空间边缘化
      * 数学表达形式
-     * f(x)^2 = ||Jx*delta_x + J_null*delta_null- b||^2
+     * f(x)^2 = ||Jx*delta_x - b||^2 + ||(Jx*delta_x)^T*delta_x||^2
+     * Jx^T(Jx*delta_x -b) + (Jx*delta_x)^T*delta_x
+     *
      * delta_x 的维度为8n, delta_null 维度为7 即(全局的旋转+平移+尺度)
      * Jx的维度为[8n, 8n], J_null的维度[8n, 7]
      * 将delta_null边缘化得到
-     * H_schur = Jx^TJx - Jx^T*J_null*(J_null^T*J_null)^{-1}*J_null^TJx
-     *         = Jx^T*Jx(I - J_null*(J_null^T*J_null)^{-1}*J_null^T)
-     * b_shcur = Jx^T*b - Jx^T * J_null* (J_null^T*J_null)^{-1} * J_null^T*b
+     * H_schur = Jx^TJx - Jx^T*J_x*J_null* (J_null^T * J_x^T * J_x*J_null)^{-1}*J_null^T*J_x^T*Jx
+     *         = H - H*J_null*(J_null^T*H*J_null)^{-1}*J_null^T*H
+     *         = H(I - J_null(J_null^T*H*J_null)^{-1}*J_null^T*H)
+     *         =
+     *         =
+     * b_shcur = Jx^T*b - Jx^T * J_x* J_null* (J_null^T*J_null)^{-1} * J_null^T*b
      *         = Jx^T*b(I - J_null* (J_null^T*J_null)^{-1} * J_null^T)
      * notice: J_null 在函数具体实现中用是用N表示的,
      * J_null* (J_null^T*J_null)^{-1} * J_null^T 在函数实现中用N*(Npi)^T表示
@@ -256,11 +262,15 @@ private:
     void orthogonalize(VecX *b, MatXX *H);
 
     // don't use shared_ptr to handle dynamic arrays
+    // 存储由于绝对位姿当前状态对线性点的偏移量造成相对位姿的增量,计算公式如下所示
+    // delta_th = Ad(t) * delta_t + Ad(h) * delta_h * delta_h
     Mat18f *adHTdeltaF = nullptr;
 
+    // 相机位姿和光度仿射变换系数的伴随矩阵, double型存储
+    // !!! notice 需要乘以SCALE_*,详细解释见EnergyFunctional.cc中的函数esetAdjointsF
     Mat88 *adHost = nullptr;    // arrays of adjoints, adHost = -Adj(HostToTarget)^T
     Mat88 *adTarget = nullptr;
-
+    // 相机位姿和光度仿射变换系数的伴随矩阵,flaot型存储
     Mat88f *adHostF = nullptr;
     Mat88f *adTargetF = nullptr;
 
